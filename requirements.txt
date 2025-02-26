@@ -1,0 +1,6 @@
+opencv-python
+numpy
+mediapipe
+sqlite3
+keras-facenet
+tensorflow
