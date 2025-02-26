@@ -110,6 +110,46 @@ def create_database():
     conn.commit()
     conn.close()
 
+# === Draw Arrows ===
+def draw_left_arrow(frame, position):
+    """Draw a small left arrow on the frame"""
+    x, y = position
+    cv2.arrowedLine(frame, (x + 20, y), (x, y), (0, 255, 0), 2, tipLength=0.3)
+    return frame
+
+def draw_right_arrow(frame, position):
+    """Draw a small right arrow on the frame"""
+    x, y = position
+    cv2.arrowedLine(frame, (x - 20, y), (x, y), (0, 255, 0), 2, tipLength=0.3)
+    return frame
+
+# === Check Face Alignment with Box ===
+def is_face_aligned(face_bbox, box):
+    """Check if the detected face aligns with the given box"""
+    if face_bbox is None:
+        return False
+    
+    face_x_min, face_y_min, face_x_max, face_y_max = face_bbox
+    box_x_min, box_y_min, box_x_max, box_y_max = box
+    
+    # Check overlap with tolerance
+    overlap = (
+        face_x_min < box_x_max and face_x_max > box_x_min and
+        face_y_min < box_y_max and face_y_max > box_y_min
+    )
+    
+    # Additional check for centering (face center within box center)
+    face_center_x = (face_x_min + face_x_max) / 2
+    face_center_y = (face_y_min + face_y_max) / 2
+    box_center_x = (box_x_min + box_x_max) / 2
+    box_center_y = (box_y_min + box_y_max) / 2
+    
+    tolerance_w = (box_x_max - box_x_min) * 0.25  # 25% of box width
+    tolerance_h = (box_y_max - box_y_min) * 0.25  # 25% of box height
+    
+    return overlap and (abs(face_center_x - box_center_x) < tolerance_w and 
+                        abs(face_center_y - box_center_y) < tolerance_h)
+
 # === User Registration (Capture Until 'q' Pressed) ===
 def register_user(user_name):
     create_database()
@@ -122,75 +162,166 @@ def register_user(user_name):
     cap = initialize_camera()
     facenet_embeddings = []
     
-    print(f"Registering user '{user_name}'. Align your face with the central box and press 's' to start capturing, 'q' to quit...")
+    print(f"Registering user '{user_name}'. Align your front face with the box and press 's' to start capturing, 'q' to quit...")
     cv2.namedWindow("Registration", cv2.WINDOW_NORMAL)
     
-    # Define central box (160x160 in a 320x240 frame)
     frame_width, frame_height = 320, 240
-    box_size = 120
-    central_box = (
-        (frame_width - box_size) // 2,  # x_min
-        (frame_height - box_size) // 2,  # y_min
-        (frame_width + box_size) // 2,  # x_max
-        (frame_height + box_size) // 2   # y_max
+    
+    # Front face box (160x160 centered)
+    front_box_size = 160
+    front_box = (
+        (frame_width - front_box_size) // 2,  # x_min (80)
+        (frame_height - front_box_size) // 2,  # y_min (40)
+        (frame_width + front_box_size) // 2,  # x_max (240)
+        (frame_height + front_box_size) // 2   # y_max (200)
     )
     
-    capturing = False
-    capture_start_time = 0
-    collected = 0
+    # Left face box (120x160, shifted left)
+    side_box_width = 120
+    side_box_height = 160
+    left_box = (
+        (frame_width - side_box_width) // 4,  # x_min (shifted left to 50)
+        (frame_height - side_box_height) // 2,  # y_min (40)
+        (frame_width - side_box_width) // 4 + side_box_width,  # x_max (170)
+        (frame_height + side_box_height) // 2   # y_max (200)
+    )
+    
+    # Right face box (120x160, shifted right)
+    right_box = (
+        frame_width - (frame_width - side_box_width) // 4 - side_box_width,  # x_min (shifted right to 150)
+        (frame_height - side_box_height) // 2,  # y_min (40)
+        frame_width - (frame_width - side_box_width) // 4,  # x_max (270)
+        (frame_height + side_box_height) // 2   # y_max (200)
+    )
+    
+    # Phase 1: Front face capture
+    capturing_front = False
+    capture_start_time_front = 0
+    collected_front = 0
+    phase = "front"
+    
+    # Phase 2: Left face capture
+    capturing_left = False
+    capture_start_time_left = 0
+    collected_left = 0
+    
+    # Phase 3: Right face capture
+    capturing_right = False
+    capture_start_time_right = 0
+    collected_right = 0
     
     while True:
         frame = capture_frame(cap)
         if frame is None:
             continue
         
-        # Draw central box
-        cv2.rectangle(frame, (central_box[0], central_box[1]), (central_box[2], central_box[3]), (255, 255, 255), 2)
+        # Draw box based on phase
+        if phase == "front":
+            current_box = front_box
+        elif phase == "left":
+            current_box = left_box
+            frame_with_box = draw_left_arrow(frame_with_box, (frame_width - 40, 20))  # Arrow top-right
+        else:  # phase == "right"
+            current_box = right_box
+            frame_with_box = draw_right_arrow(frame_with_box, (20, 20))  # Arrow top-left
         
-        # Detect face
+        cv2.rectangle(frame, (current_box[0], current_box[1]), (current_box[2], current_box[3]), (255, 255, 255), 2)
+        
+        # Detect face with MTCNN for embedding
         facenet_embedding, face_roi, bbox, frame_with_box = detect_and_extract_features(frame, detector, facenet_model)
         
-        if facenet_embedding is not None:
-            # Check if face overlaps with central box
-            face_x_min, face_y_min, face_x_max, face_y_max = bbox
-            overlap = (
-                face_x_min < central_box[2] and face_x_max > central_box[0] and
-                face_y_min < central_box[3] and face_y_max > central_box[1]
-            )
-            
-            if overlap:
-                cv2.putText(frame_with_box, "Face aligned - Press 's' to capture", (10, 60), 
+        # Debug output to check detection
+        if facenet_embedding is None:
+            print("Debug: No embedding generated - MTCNN failed to detect face.")
+        
+        aligned = is_face_aligned(bbox, current_box)
+        
+        if phase == "front":
+            if aligned and facenet_embedding is not None:
+                cv2.putText(frame_with_box, "Front face aligned - Press 's' to capture", (10, 60), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 
-                if capturing:
-                    elapsed_time = time.time() - capture_start_time
+                if capturing_front:
+                    elapsed_time = time.time() - capture_start_time_front
                     seconds_remaining = max(0, 5 - int(elapsed_time))
-                    cv2.putText(frame_with_box, f"Capturing: {seconds_remaining}s", (10, 90), 
+                    cv2.putText(frame_with_box, f"Capturing front: {seconds_remaining}s", (10, 90), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                    cv2.putText(frame_with_box, f"Collected: {collected}", (10, 120), 
+                    cv2.putText(frame_with_box, f"Collected: {collected_front}", (10, 120), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                     
-                    # Capture embedding every frame while within 5 seconds
                     if elapsed_time <= 5:
                         facenet_embeddings.append(facenet_embedding)
-                        collected += 1
+                        collected_front += 1
                     elif elapsed_time > 5:
-                        capturing = False  # Stop capturing after 5 seconds
-            
+                        capturing_front = False
+                        phase = "left"
+                        print("Front face capture complete. Now turn your face to the left and press 's' to start capturing.")
             else:
-                cv2.putText(frame_with_box, "Align face with box", (10, 60), 
+                cv2.putText(frame_with_box, "Align front face with box", (10, 60), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-        else:
-            cv2.putText(frame_with_box, "No face detected - Align face with box", (10, 60), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-            capturing = False  # Reset capturing if face is lost
+                capturing_front = False
+        
+        elif phase == "left":
+            if aligned and facenet_embedding is not None:
+                cv2.putText(frame_with_box, "Left face aligned - Press 's' to capture", (10, 60), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                
+                if capturing_left:
+                    elapsed_time = time.time() - capture_start_time_left
+                    seconds_remaining = max(0, 5 - int(elapsed_time))
+                    cv2.putText(frame_with_box, f"Capturing left: {seconds_remaining}s", (10, 90), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                    cv2.putText(frame_with_box, f"Collected: {collected_front + collected_left}", (10, 120), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                    
+                    if elapsed_time <= 5:
+                        facenet_embeddings.append(facenet_embedding)
+                        collected_left += 1
+                    elif elapsed_time > 5:
+                        capturing_left = False
+                        phase = "right"
+                        print("Left face capture complete. Now turn your face to the right and press 's' to start capturing.")
+            else:
+                cv2.putText(frame_with_box, "Turn face left to align with box", (10, 60), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                capturing_left = False
+        
+        elif phase == "right":
+            if aligned and facenet_embedding is not None:
+                cv2.putText(frame_with_box, "Right face aligned - Press 's' to capture", (10, 60), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                
+                if capturing_right:
+                    elapsed_time = time.time() - capture_start_time_right
+                    seconds_remaining = max(0, 5 - int(elapsed_time))
+                    cv2.putText(frame_with_box, f"Capturing right: {seconds_remaining}s", (10, 90), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                    cv2.putText(frame_with_box, f"Collected: {collected_front + collected_left + collected_right}", (10, 120), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                    
+                    if elapsed_time <= 5:
+                        facenet_embeddings.append(facenet_embedding)
+                        collected_right += 1
+                    elif elapsed_time > 5:
+                        break  # Exit after right capture completes
+            else:
+                cv2.putText(frame_with_box, "Turn face right to align with box", (10, 60), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                capturing_right = False
         
         cv2.imshow("Registration", frame_with_box)
         
         key = cv2.waitKey(100) & 0xFF
-        if key == ord('s') and facenet_embedding is not None and overlap and not capturing:
-            capturing = True
-            capture_start_time = time.time()
+        if key == ord('s') and aligned and facenet_embedding is not None:
+            if phase == "front" and not capturing_front:
+                capturing_front = True
+                capture_start_time_front = time.time()
+            elif phase == "left" and not capturing_left:
+                capturing_left = True
+                capture_start_time_left = time.time()
+            elif phase == "right" and not capturing_right:
+                capturing_right = True
+                capture_start_time_right = time.time()
         elif key == ord('q'):
             print("Registration cancelled.")
             break
@@ -198,8 +329,9 @@ def register_user(user_name):
     cap.release()
     cv2.destroyAllWindows()
     
-    if len(facenet_embeddings) < 5:
-        print(f"Insufficient samples collected ({len(facenet_embeddings)}). Minimum 5 required. Registration failed.")
+    total_collected = collected_front + (collected_left if 'collected_left' in locals() else 0) + (collected_right if 'collected_right' in locals() else 0)
+    if total_collected < 5:
+        print(f"Insufficient samples collected ({total_collected}). Minimum 5 required. Registration failed.")
         return False
     
     mean_facenet_embedding = np.mean(facenet_embeddings, axis=0)
@@ -213,7 +345,7 @@ def register_user(user_name):
     conn.commit()
     conn.close()
     
-    print(f"User '{user_name}' registered successfully with {len(facenet_embeddings)} samples.")
+    print(f"User '{user_name}' registered successfully with {total_collected} samples (Front: {collected_front}, Left: {collected_left if 'collected_left' in locals() else 0}, Right: {collected_right if 'collected_right' in locals() else 0}).")
     return True
 
 # === View Registered Users ===
