@@ -191,34 +191,40 @@ def recognize_face():
     cv2.namedWindow("Recognition", cv2.WINDOW_NORMAL)
     
     facenet_threshold = 0.75
-    last_recognized_name = None  # Store the last recognized name
-    greeting_printed = False  # Flag for "Hello" message (prints once)
-    no_face_count = 0  # Counter for no face detected frames
-    last_state = None  # Track last state: 'recognized', 'no_face'
+    last_recognized_name = None
+    greeting_printed = False
+    no_face_count = 0
+    last_state = None
+    prev_time = time.time()  # For FPS calculation
 
     while True:
         frame = capture_frame(cap)
         if frame is None:
             continue
         
-        # Measure processing time for each frame
+        # Measure processing time for FPS and TensorFlow-style output
         start_time = time.time()
         
         facenet_embedding, face_roi, bbox, frame_with_box = detect_and_extract_features(
             frame, detector, facenet_model
         )
         
-        # Calculate processing time
-        elapsed_time = time.time() - start_time
-        elapsed_ms = int(elapsed_time * 1000)  # Convert to milliseconds
-        elapsed_s = int(elapsed_time) if elapsed_time >= 1 else 0
+        # Calculate FPS
+        current_time = time.time()
+        elapsed_time = current_time - start_time
+        fps = 1 / (current_time - prev_time) if (current_time - prev_time) > 0 else 0
+        prev_time = current_time
         
-        # Format output like TensorFlow progress bar
-        if elapsed_s > 0:
-            progress_output = f"1/1 ━━━━━━━━━━━━━━━━━━━━ {elapsed_s}s {elapsed_s}s/step"
-        else:
-            progress_output = f"1/1 ━━━━━━━━━━━━━━━━━━━━ 0s {elapsed_ms}ms/step"
+        # TensorFlow-style progress bar
+        elapsed_ms = int(elapsed_time * 1000)
+        elapsed_s = int(elapsed_time) if elapsed_time >= 1 else 0
+        progress_output = f"1/1 ━━━━━━━━━━━━━━━━━━━━ {elapsed_s}s {elapsed_s}s/step" if elapsed_s > 0 else f"1/1 ━━━━━━━━━━━━━━━━━━━━ 0s {elapsed_ms}ms/step"
         print(progress_output)
+        
+        # Display FPS on the frame
+        fps_text = f"FPS: {fps:.2f}"
+        cv2.putText(frame_with_box, fps_text, (10, 90), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
         
         if facenet_embedding is not None:
             best_match, highest_confidence = None, -1
@@ -240,7 +246,7 @@ def recognize_face():
                 print(f"Hello {best_match}, how's your day?😊")
                 last_recognized_name = best_match
                 greeting_printed = True
-                no_face_count = 0  # Reset counter
+                no_face_count = 0
                 last_state = 'recognized'
             
             # Handle welcome back message (loops)
@@ -249,18 +255,17 @@ def recognize_face():
                   no_face_count >= 5 and 
                   last_state == 'no_face'):
                 print(f"{best_match}, welcome back I miss you😍")
-                no_face_count = 0  # Reset counter
+                no_face_count = 0
                 last_state = 'recognized'
         
         else:
-            # No face detected (face detection lost)
             if last_recognized_name is not None and greeting_printed:
                 no_face_count += 1
                 if no_face_count >= 5 and last_state == 'recognized':
                     print(f"{last_recognized_name}, where you go come back I need you🥺")
                     last_state = 'no_face'
             elif last_recognized_name is not None and greeting_printed and last_state == 'no_face':
-                no_face_count += 1  # Keep counting to allow welcome back later
+                no_face_count += 1
 
         cv2.imshow("Recognition", frame_with_box)
         if cv2.waitKey(1) & 0xFF == ord('q'):
