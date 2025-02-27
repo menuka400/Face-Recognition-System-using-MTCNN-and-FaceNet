@@ -119,84 +119,129 @@ def register_user(user_name):
         return False
     
     cap = initialize_camera()
-    facenet_embeddings = []
+    facenet_embeddings = {'front': [], 'left': [], 'right': []}
     
-    print(f"Registering user '{user_name}'. Align your face to the oval in the center and press 'q' when done...")
+    print(f"Registering user '{user_name}'. Follow the instructions below.")
     cv2.namedWindow("Registration", cv2.WINDOW_NORMAL)
     
-    collected = 0
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))  # 320
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))  # 240
     
     # Define fixed oval parameters (center of the frame)
     center_x = frame_width // 2
     center_y = frame_height // 2
-    oval_width = 100  # Width of the oval (adjust as needed)
-    oval_height = 140  # Height of the oval (adjust for oval face shape)
+    oval_width = 100
+    oval_height = 140
     
-    while True:
-        frame = capture_frame(cap)
-        if frame is None:
-            continue
+    # Stages of capture
+    stages = ['front', 'left', 'right']
+    stage_instructions = {
+        'front': "Align your FRONT face to the oval. Press 's' to start capturing (5 seconds).",
+        'left': "Turn your head LEFT to the oval. Press 's' to start capturing (5 seconds).",
+        'right': "Turn your head RIGHT to the oval. Press 's' to start capturing (5 seconds)."
+    }
+    
+    for stage in stages:
+        collected = 0
+        capture_start_time = None
+        print(f"\n{stage_instructions[stage]}")
         
-        frame_with_box = frame.copy()
-        rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        faces = detector.detect_faces(rgb_image)
-        
-        # Draw the fixed oval in the center
-        cv2.ellipse(frame_with_box, 
-                    (center_x, center_y),  # Center of the oval
-                    (oval_width // 2, oval_height // 2),  # Width and height radii
-                    0,  # Angle (no rotation)
-                    0, 360,  # Start and end angle (full oval)
-                    (0, 255, 0),  # Green color
-                    2)  # Thickness
-        
-        # Process face detection
-        if faces and faces[0]['confidence'] >= 0.9:
-            face = faces[0]
-            x, y, w, h = face['box']
-            x_min, y_min = max(0, x), max(0, y)
-            x_max, y_max = min(frame.shape[1], x + w), min(frame.shape[0], y + h)
+        while True:
+            frame = capture_frame(cap)
+            if frame is None:
+                continue
             
-            face_roi = frame[y_min:y_max, x_min:x_max]
-            facenet_embedding = get_face_embedding(facenet_model, face_roi)
+            frame_with_box = frame.copy()
+            rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            faces = detector.detect_faces(rgb_image)
             
-            # Check if the face is within the oval
-            face_center_x = x_min + w // 2
-            face_center_y = y_min + h // 2
-            if (abs(face_center_x - center_x) < oval_width // 2 and 
-                abs(face_center_y - center_y) < oval_height // 2):
-                if facenet_embedding is not None:
-                    facenet_embeddings.append(facenet_embedding)
-                    collected += 1
-                    cv2.putText(frame_with_box, "Face aligned! Collecting...", 
-                                (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            else:
-                cv2.putText(frame_with_box, "Align face to oval", 
-                            (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-        else:
-            cv2.putText(frame_with_box, "No face detected", 
-                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-        
-        # Display sample count
-        cv2.putText(frame_with_box, f"Samples: {collected}", 
-                    (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        
-        cv2.imshow("Registration", frame_with_box)
-        
-        if cv2.waitKey(100) & 0xFF == ord('q'):
-            print("Registration completed by user.")
-            break
+            # Draw the fixed oval in the center
+            cv2.ellipse(frame_with_box, 
+                        (center_x, center_y),
+                        (oval_width // 2, oval_height // 2),
+                        0, 0, 360,
+                        (0, 255, 0), 2)
+            
+            # Display current stage and instructions
+            cv2.putText(frame_with_box, f"Stage: {stage.capitalize()}", 
+                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+            cv2.putText(frame_with_box, "Press 's' to start", 
+                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(frame_with_box, f"Samples: {collected}", 
+                        (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            
+            # Draw arrows for left and right stages
+            if stage == 'left':
+                cv2.arrowedLine(frame_with_box, 
+                                (center_x - 20, center_y + oval_height // 2 + 20),
+                                (center_x - 60, center_y + oval_height // 2 + 20),
+                                (0, 255, 0), 2, tipLength=0.3)
+            elif stage == 'right':
+                cv2.arrowedLine(frame_with_box, 
+                                (center_x + 20, center_y + oval_height // 2 + 20),
+                                (center_x + 60, center_y + oval_height // 2 + 20),
+                                (0, 255, 0), 2, tipLength=0.3)
+            
+            # Check for 's' key to start capture
+            key = cv2.waitKey(100) & 0xFF
+            if key == ord('s') and capture_start_time is None:
+                capture_start_time = time.time()
+                print(f"Capturing {stage} face for 5 seconds...")
+            
+            # Capture embeddings during the 5-second window
+            if capture_start_time is not None:
+                elapsed_time = time.time() - capture_start_time
+                if elapsed_time <= 5.0:
+                    if faces and faces[0]['confidence'] >= 0.9:
+                        face = faces[0]
+                        x, y, w, h = face['box']
+                        x_min, y_min = max(0, x), max(0, y)
+                        x_max, y_max = min(frame.shape[1], x + w), min(frame.shape[0], y + h)
+                        
+                        face_roi = frame[y_min:y_max, x_min:x_max]
+                        facenet_embedding = get_face_embedding(facenet_model, face_roi)
+                        
+                        # Check if face is within the oval
+                        face_center_x = x_min + w // 2
+                        face_center_y = y_min + h // 2
+                        if (abs(face_center_x - center_x) < oval_width // 2 and 
+                            abs(face_center_y - center_y) < oval_height // 2):
+                            if facenet_embedding is not None:
+                                facenet_embeddings[stage].append(facenet_embedding)
+                                collected += 1
+                                cv2.putText(frame_with_box, "Capturing...", 
+                                            (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                        else:
+                            cv2.putText(frame_with_box, "Align face to oval", 
+                                        (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    else:
+                        cv2.putText(frame_with_box, "No face detected", 
+                                    (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                else:
+                    print(f"Finished capturing {stage} face. Collected {collected} samples.")
+                    break  # Move to the next stage
+            
+            cv2.imshow("Registration", frame_with_box)
+            
+            # Allow early exit with 'q'
+            if key == ord('q'):
+                print("Registration interrupted by user.")
+                cap.release()
+                cv2.destroyAllWindows()
+                return False
     
     cap.release()
     cv2.destroyAllWindows()
     
-    if len(facenet_embeddings) < 5:
-        print(f"Insufficient samples collected ({len(facenet_embeddings)}). Minimum 5 required. Registration failed.")
+    # Check if enough samples were collected from all angles
+    total_samples = sum(len(facenet_embeddings[stage]) for stage in stages)
+    if total_samples < 5:
+        print(f"Insufficient samples collected ({total_samples}). Minimum 5 required across all angles. Registration failed.")
         return False
     
-    mean_facenet_embedding = np.mean(facenet_embeddings, axis=0)
+    # Combine embeddings from all angles and compute the mean
+    all_embeddings = np.concatenate([facenet_embeddings[stage] for stage in stages if facenet_embeddings[stage]])
+    mean_facenet_embedding = np.mean(all_embeddings, axis=0)
     
     conn = sqlite3.connect('face_database.db')
     cursor = conn.cursor()
@@ -207,7 +252,7 @@ def register_user(user_name):
     conn.commit()
     conn.close()
     
-    print(f"User '{user_name}' registered successfully with {len(facenet_embeddings)} samples.")
+    print(f"User '{user_name}' registered successfully with {total_samples} samples (Front: {len(facenet_embeddings['front'])}, Left: {len(facenet_embeddings['left'])}, Right: {len(facenet_embeddings['right'])}).")
     return True
 
 # === Face Recognition ===
