@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face Recognition System</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Arial', sans-serif;
+        }
+
+        body {
+            background: #1e3c72; /* Fixed solid color */
+            color: #fff;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+            animation: fadeInDown 1s ease-out;
+        }
+
+        header h1 {
+            font-size: 2.5em;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: #fff;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        header p {
+            font-size: 1.2em;
+            color: #d3e0ff;
+            margin-top: 5px;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            max-width: 1000px;
+            width: 100%;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 20px;
+            text-align: center;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            cursor: pointer;
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            animation: cardFadeIn 0.5s ease-out forwards;
+            opacity: 0;
+        }
+
+        .card:nth-child(1) { animation-delay: 0.1s; }
+        .card:nth-child(2) { animation-delay: 0.2s; }
+        .card:nth-child(3) { animation-delay: 0.3s; }
+        .card:nth-child(4) { animation-delay: 0.4s; }
+
+        @keyframes cardFadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .card:hover {
+            transform: translateY(-10px) scale(1.05);
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .card h2 {
+            font-size: 1.5em;
+            margin-bottom: 10px;
+            color: #fff;
+            transition: color 0.3s ease;
+        }
+
+        .card:hover h2 {
+            color: #00b4d8;
+        }
+
+        .card p {
+            font-size: 1em;
+            color: #d3e0ff;
+            margin-bottom: 15px;
+        }
+
+        .card button {
+            padding: 10px 20px;
+            font-size: 1em;
+            color: #fff;
+            background: #00b4d8;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: background 0.3s ease, transform 0.2s ease;
+        }
+
+        .card button:hover {
+            background: #0077b6;
+            transform: scale(1.1);
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .modal-content {
+            background: #fff;
+            padding: 20px;
+            border-radius: 10px;
+            width: 90%;
+            max-width: 500px;
+            text-align: center;
+            color: #333;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateY(-50px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .modal-content h3 {
+            margin-bottom: 15px;
+            color: #2a5298;
+        }
+
+        .modal-content input {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 1em;
+            transition: border-color 0.3s ease;
+        }
+
+        .modal-content input:focus {
+            border-color: #00b4d8;
+            outline: none;
+        }
+
+        .modal-content button {
+            padding: 10px 20px;
+            background: #00b4d8;
+            border: none;
+            color: #fff;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.3s ease, transform 0.2s ease;
+        }
+
+        .modal-content button:hover {
+            background: #0077b6;
+            transform: scale(1.05);
+        }
+
+        .modal-content .close-btn {
+            background: #ff4d4d;
+            margin-left: 10px;
+        }
+
+        .modal-content .close-btn:hover {
+            background: #cc0000;
+        }
+
+        .modal-content .clear-btn {
+            background: #ff4d4d;
+            margin-top: 10px;
+        }
+
+        .modal-content .clear-btn:hover {
+            background: #cc0000;
+        }
+
+        .modal-content ul {
+            list-style-type: none;
+            margin: 10px 0;
+            text-align: left;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .modal-content li {
+            padding: 5px 0;
+            color: #333;
+            transition: background 0.2s ease;
+        }
+
+        .modal-content li:hover {
+            background: #f0f0f0;
+        }
+
+        #output {
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            max-width: 1000px;
+            width: 100%;
+            text-align: center;
+            color: #d3e0ff;
+            display: none;
+            white-space: pre-wrap;
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        @media (max-width: 600px) {
+            header h1 {
+                font-size: 2em;
+            }
+
+            header p {
+                font-size: 1em;
+            }
+
+            .card h2 {
+                font-size: 1.2em;
+            }
+
+            .card p {
+                font-size: 0.9em;
+            }
+
+            .card button {
+                padding: 8px 16px;
+                font-size: 0.9em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Face Recognition System</h1>
+        <p>Advanced AI-Powered Face Identification</p>
+    </header>
+
+    <div class="container">
+        <div class="card" onclick="startRecognition()">
+            <h2>Start Recognition</h2>
+            <p>Identify faces in real-time using your camera.</p>
+            <button>Start</button>
+        </div>
+        <div class="card" onclick="showRegisterModal()">
+            <h2>Register New User</h2>
+            <p>Add a new face to the recognition database.</p>
+            <button>Register</button>
+        </div>
+        <div class="card" onclick="showUsersModal()">
+            <h2>View Registered Users</h2>
+            <p>See all users currently in the system.</p>
+            <button>View</button>
+        </div>
+        <div class="card" onclick="runDiagnostics()">
+            <h2>Run Diagnostics</h2>
+            <p>Check system health and performance.</p>
+            <button>Check</button>
+        </div>
+    </div>
+
+    <!-- Modal for Registering User -->
+    <div id="registerModal" class="modal">
+        <div class="modal-content">
+            <h3>Register New User</h3>
+            <input type="text" id="username" placeholder="Enter user name">
+            <button onclick="registerUser()">Submit</button>
+            <button class="close-btn" onclick="closeModal('registerModal')">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Modal for Viewing Users -->
+    <div id="usersModal" class="modal">
+        <div class="modal-content">
+            <h3>Registered Users</h3>
+            <div id="usersList"></div>
+            <button class="clear-btn" onclick="clearDatabase()">Clear Database</button>
+            <button class="close-btn" onclick="closeModal('usersModal')">Close</button>
+        </div>
+    </div>
+
+    <div id="output"></div>
+
+    <script>
+        function showRegisterModal() {
+            document.getElementById('registerModal').style.display = 'flex';
+            document.getElementById('username').value = '';
+        }
+
+        function showUsersModal() {
+            document.getElementById('usersModal').style.display = 'flex';
+            viewUsers();
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+        }
+
+        function showOutput(message) {
+            const output = document.getElementById('output');
+            output.textContent = message;
+            output.style.display = 'block';
+            setTimeout(() => {
+                output.style.display = 'none';
+            }, 5000);
+        }
+
+        async function startRecognition() {
+            try {
+                const response = await fetch('/start_recognition');
+                const data = await response.json();
+                showOutput(data.message);
+            } catch (error) {
+                showOutput('Error starting recognition: ' + error.message);
+            }
+        }
+
+        async function registerUser() {
+            const username = document.getElementById('username').value.trim();
+            if (username) {
+                try {
+                    const response = await fetch('/register_user', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username: username })
+                    });
+                    const data = await response.json();
+                    showOutput(data.message);
+                    closeModal('registerModal');
+                } catch (error) {
+                    showOutput('Error registering user: ' + error.message);
+                }
+            } else {
+                showOutput('Please enter a valid username.');
+            }
+        }
+
+        async function viewUsers() {
+            try {
+                const response = await fetch('/view_users');
+                const data = await response.json();
+                const usersList = document.getElementById('usersList');
+                if (data.users.length === 0) {
+                    usersList.innerHTML = '<p>No users registered.</p>';
+                } else {
+                    usersList.innerHTML = '<ul>' + data.users.map(user => 
+                        `<li>${user.id} (Registered: ${user.registration_date})</li>`
+                    ).join('') + '</ul>';
+                }
+                showOutput(data.message);
+            } catch (error) {
+                showOutput('Error viewing users: ' + error.message);
+            }
+        }
+
+        async function clearDatabase() {
+            if (confirm('Are you sure you want to clear the database? This action cannot be undone.')) {
+                try {
+                    const response = await fetch('/clear_database', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    const data = await response.json();
+                    showOutput(data.message);
+                    viewUsers();
+                } catch (error) {
+                    showOutput('Error clearing database: ' + error.message);
+                }
+            }
+        }
+
+        async function runDiagnostics() {
+            try {
+                const response = await fetch('/run_diagnostics');
+                const data = await response.json();
+                showOutput(data.message);
+            } catch (error) {
+                showOutput('Error running diagnostics: ' + error.message);
+            }
+        }
+
+        window.onclick = function(event) {
+            const registerModal = document.getElementById('registerModal');
+            const usersModal = document.getElementById('usersModal');
+            if (event.target === registerModal) {
+                closeModal('registerModal');
+            } else if (event.target === usersModal) {
+                closeModal('usersModal');
+            }
+        }
+    </script>
+</body>
+</html>
