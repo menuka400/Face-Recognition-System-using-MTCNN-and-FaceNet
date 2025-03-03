@@ -9,6 +9,7 @@ import logging
 import tracemalloc
 import psutil
 import GPUtil
+import pyttsx3  # Added for TTS
 
 import mediapipe as mp
 mp_face_detection = mp.solutions.face_detection
@@ -21,6 +22,19 @@ my_face_detector = mp_face_detection.FaceDetection(model_selection=1, min_detect
 # Suppress TensorFlow warnings and info messages
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 logging.getLogger('tensorflow').setLevel(logging.ERROR)
+
+# === TTS Initialization ===
+def init_tts():
+    """Initialize the TTS engine"""
+    try:
+        engine = pyttsx3.init()
+        engine.setProperty('rate', 150)  # Speed of speech
+        engine.setProperty('volume', 0.9)  # Volume (0.0 to 1.0)
+        print("TTS engine initialized successfully")
+        return engine
+    except Exception as e:
+        print(f"Failed to initialize TTS engine: {str(e)}")
+        return None
 
 # === Model Initialization ===
 def load_facenet():
@@ -68,7 +82,9 @@ def initialize_camera():
 def capture_frame(cap):
     ret, frame = cap.read()
     if not ret:
+        print("Failed to capture frame")
         return None
+    print("Frame captured successfully")
     return frame
 
 # === Face Detection and Feature Extraction (Single Face Only) ===
@@ -92,22 +108,21 @@ def detect_and_extract_features(model, frame):
                 ],
                 [frame_width, frame_height, frame_width, frame_height],
             ).astype(int)
+            x, y, w, h = face_rect
+            x_min, y_min = max(0, x), max(0, y)
+            x_max, y_max = min(frame.shape[1], x + w), min(frame.shape[0], y + h)
+            face_roi = frame[y_min:y_max, x_min:x_max]
+            facenet_embedding = get_face_embedding(model, face_roi)
+            tracemalloc.stop()
+            cv2.rectangle(frame_with_box, (x_min, y_min), (x_max, y_max), (0, 255, 0), 1)
+            cv2.putText(frame_with_box, "Face detected", (10, 30), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            return facenet_embedding, face_roi, (x_min, y_min, x_max, y_max), frame_with_box
     else:
         cv2.putText(frame_with_box, "Low confidence", (10, 30), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        tracemalloc.stop()
         return None, None, None, frame_with_box
-    
-    x, y, w, h = face_rect
-    x_min, y_min = max(0, x), max(0, y)
-    x_max, y_max = min(frame.shape[1], x + w), min(frame.shape[0], y + h)
-
-    face_roi = frame[y_min:y_max, x_min:x_max]
-    facenet_embedding = get_face_embedding(model, face_roi)
-    tracemalloc.stop()
-    cv2.rectangle(frame_with_box, (x_min, y_min), (x_max, y_max), (0, 255, 0), 1)
-    cv2.putText(frame_with_box, "Face detected", (10, 30), 
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-    return facenet_embedding, face_roi, (x_min, y_min, x_max, y_max), frame_with_box
 
 # === Database Functions ===
 def create_database():
@@ -123,25 +138,35 @@ def create_database():
     conn.commit()
     conn.close()
 
-# === User Registration (Front, Left with Prep, Right with Prep) ===
+# === User Registration ===
 def register_user(user_name):
     create_database()
     
     facenet_model = load_facenet()
+    tts_engine = init_tts()
+    if tts_engine is None:
+        print("TTS not available. Proceeding without voice prompts.")
     
     cap = initialize_camera()
     facenet_embeddings = []
     
     print(f"Registering user '{user_name}'.")
-    print("Please face the camera for 10 seconds (frontal), then follow the arrows with 3-second prep times.")
+    print("Follow the voice instructions and arrows.")
     cv2.namedWindow("Registration", cv2.WINDOW_NORMAL)
     
+    # Display initial frame to ensure window is active
+    frame = capture_frame(cap)
+    if frame is not None:
+        frame_with_box = detect_and_extract_features(facenet_model, frame)[3]
+        cv2.imshow("Registration", frame_with_box)
+        cv2.waitKey(10)
+    
     phases = [
-        ("Frontal Face", None, 10, False),           # Frontal, no arrow, 10s, no prep
-        ("Prepare for Left", "left", 3, True),      # Prep for left, left arrow, 3s, prep mode
-        ("Left Side", "left", 10, False),           # Left, left arrow, 10s, capture mode
-        ("Prepare for Right", "right", 3, True),    # Prep for right, right arrow, 3s, prep mode
-        ("Right Side", "right", 10, False),         # Right, right arrow, 10s, capture mode
+        ("Frontal Face", None, 10, "Do not move, I am going to take some images in one, two, three"),
+        ("Prepare for Left", "left", 3, "Please turn your face to the left side, take images in one, two, three"),
+        ("Left Side", "left", 10, None),
+        ("Prepare for Right", "right", 3, "Please turn your face to the right side, take images in one, two, three"),
+        ("Right Side", "right", 10, None),
     ]
     phase_idx = 0
     phase_start_time = time.time()
@@ -154,8 +179,14 @@ def register_user(user_name):
         
         facenet_embedding, face_roi, bbox, frame_with_box = detect_and_extract_features(facenet_model, frame)
         
-        phase_name, arrow_direction, duration, is_prep = phases[phase_idx]
+        phase_name, arrow_direction, duration, tts_message = phases[phase_idx]
         elapsed_time = time.time() - phase_start_time
+        
+        # Trigger TTS for phases with a message
+        if elapsed_time < 1.0 and tts_message and tts_engine:
+            print(f"Triggering TTS for {phase_name} at {elapsed_time:.2f}s")
+            tts_engine.say(tts_message)
+            tts_engine.runAndWait()
         
         # Display phase and timer
         remaining_time = max(0, duration - elapsed_time)
@@ -163,7 +194,7 @@ def register_user(user_name):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         cv2.putText(frame_with_box, f"Time left: {remaining_time:.1f}s", (10, 90), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        if not is_prep:
+        if phase_name in ["Frontal Face", "Left Side", "Right Side"]:
             cv2.putText(frame_with_box, f"Samples: {collected_samples}", (10, 120), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         
@@ -175,33 +206,35 @@ def register_user(user_name):
             cv2.arrowedLine(frame_with_box, (50, frame.shape[0] // 2), 
                            (100, frame.shape[0] // 2), (0, 255, 0), 2, tipLength=0.3)
         
-        # Collect samples only during capture phases (not prep)
-        if facenet_embedding is not None and not is_prep:
+        # Collect samples only during capture phases
+        if facenet_embedding is not None and phase_name in ["Frontal Face", "Left Side", "Right Side"]:
             facenet_embeddings.append(facenet_embedding)
             collected_samples += 1
+            print(f"Sample collected in {phase_name}. Total samples: {collected_samples}")
         
         cv2.imshow("Registration", frame_with_box)
         
-        # Move to next phase after duration
+        # Move to next phase only after full duration
         if elapsed_time >= duration:
-            print(f"Completed {phase_name}.")
+            print(f"Completed {phase_name} after {elapsed_time:.2f}s. Total samples so far: {collected_samples}")
             phase_idx += 1
             phase_start_time = time.time()
             if phase_idx < len(phases):
                 next_phase_name = phases[phase_idx][0]
                 print(f"Now: {next_phase_name}")
-                if phases[phase_idx][3]:  # If next phase is prep
-                    print(f"Prepare to turn your face {phases[phase_idx][1]} in 3 seconds...")
+                if "Prepare" in next_phase_name:
+                    print(f"Prepare to turn your face {phases[phase_idx][1]}...")
         
-        # Allow early exit with 'q'
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        # Control frame rate to ~30 FPS (33ms per frame) and allow early exit with 'q'
+        key = cv2.waitKey(33)  # ~30 FPS
+        if key & 0xFF == ord('q'):
             print("Registration interrupted by user.")
             break
     
     cap.release()
     cv2.destroyAllWindows()
     
-    if len(facenet_embeddings) < 30:  # Minimum 30 samples (roughly 10 per capture phase)
+    if len(facenet_embeddings) < 30:
         print(f"Insufficient samples collected ({len(facenet_embeddings)}). Minimum 30 required. Registration failed.")
         return False
     
@@ -219,9 +252,10 @@ def register_user(user_name):
     print(f"User '{user_name}' registered successfully with {len(facenet_embeddings)} samples.")
     return True
 
-# === Face Recognition ===
+# === Face Recognition (With TTS for Unrecognized Face) ===
 def recognize_face():
     facenet_model = load_facenet()
+    tts_engine = init_tts()  # Initialize TTS for recognition
     
     cap = initialize_camera()
     
@@ -330,6 +364,10 @@ def recognize_face():
                     cap.release()
                     cv2.destroyAllWindows()
                     
+                    if tts_engine:
+                        print("TTS triggered for unrecognized face prompt")
+                        tts_engine.say("Unrecognized face detected. Please enter your name to register.")
+                        tts_engine.runAndWait()
                     user_name = input("Unrecognized face detected. Please enter your name to register: ").strip()
                     if user_name:
                         success = register_user(user_name)
