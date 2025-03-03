@@ -38,7 +38,6 @@ def init_tts():
             print(f"{i}: {voice.name} (ID: {voice.id})")
         
         # Select a more human-like voice (e.g., Microsoft Zira on Windows, Samantha on macOS)
-        # Adjust index based on your system's voice list (run once to check)
         attractive_voice_index = 1  # Example: Often Zira or another natural voice
         if len(voices) > attractive_voice_index:
             engine.setProperty('voice', voices[attractive_voice_index].id)
@@ -352,20 +351,27 @@ def recognize_face():
                 current_label = f"Recognized: {best_match} ({highest_confidence:.3f})"
                 current_color = (0, 255, 0)
                 
+                # Check if this is a new person
+                if best_match != last_recognized_name:
+                    # Reset state for new person
+                    greeting_printed = False
+                    no_face_count = 0
+                    last_state = None
+                    last_recognized_name = best_match
+                
+                # Initial greeting for new person
                 if not greeting_printed:
                     print(f"Hello {best_match}, how's your day?")
                     if tts_engine:
                         tts_engine.say(f"Hello {best_match}, how's your day?")
                         tts_engine.runAndWait()
-                    last_recognized_name = best_match
                     greeting_printed = True
-                    no_face_count = 0
                     last_state = 'recognized'
+                    no_face_count = 0
                     unknown_count = 0
                 
-                elif (last_recognized_name == best_match and 
-                      no_face_count >= 5 and 
-                      last_state == 'no_face'):
+                # Welcome back after absence
+                elif (no_face_count >= 5 and last_state == 'no_face'):
                     print(f"{best_match}, welcome back I miss you!")
                     if tts_engine:
                         tts_engine.say(f"{best_match}, welcome back I miss you!")
@@ -417,8 +423,6 @@ def recognize_face():
                         tts_engine.say(f"{last_recognized_name}, where you go come back I need you!")
                         tts_engine.runAndWait()
                     last_state = 'no_face'
-                elif last_state == 'no_face':
-                    no_face_count += 1
             unknown_count = 0
         
         embeddings_batch = []
