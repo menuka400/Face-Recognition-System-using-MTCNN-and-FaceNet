@@ -250,7 +250,7 @@ def recognize_face():
     print("Starting continuous face recognition with enhanced anti-spoofing (5 frames per second). Press 'q' to stop...")
     cv2.namedWindow("Recognition", cv2.WINDOW_NORMAL)
     
-    facenet_threshold = 0.65
+    facenet_threshold = 0.70
     last_recognized_name = None
     greeting_printed = False
     no_face_count = 0
