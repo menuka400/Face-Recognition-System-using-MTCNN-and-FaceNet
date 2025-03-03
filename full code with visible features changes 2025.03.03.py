@@ -9,12 +9,13 @@ import logging
 import tracemalloc
 import psutil
 import GPUtil
-import mediapipe as mp
 
+import mediapipe as mp
 mp_face_detection = mp.solutions.face_detection
 mp_drawing = mp.solutions.drawing_utils
 
 model_dir = 'facenet-tensorflow-tensorflow2-default-v2'
+
 my_face_detector = mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
 
 # Suppress TensorFlow warnings and info messages
@@ -23,6 +24,7 @@ logging.getLogger('tensorflow').setLevel(logging.ERROR)
 
 # === Model Initialization ===
 def load_facenet():
+    """Load the FaceNet model using keras-facenet"""
     try:
         facenet = FaceNet(key='20180402-114759')
         return facenet
@@ -31,6 +33,7 @@ def load_facenet():
         return None
 
 def initialize_detector():
+    """Initialize MTCNN detector with default settings"""
     try:
         return 1
     except Exception as e:
@@ -39,6 +42,7 @@ def initialize_detector():
 
 # === Face Embedding Generation ===
 def get_face_embedding(model, face_img):
+    """Generate and normalize face embedding"""
     try:
         if face_img.shape[0] < 160 or face_img.shape[1] < 160:
             face_img = cv2.resize(face_img, (160, 160))
@@ -67,7 +71,7 @@ def capture_frame(cap):
         return None
     return frame
 
-# === Face Detection and Feature Extraction ===
+# === Face Detection and Feature Extraction (Single Face Only) ===
 def detect_and_extract_features(model, frame):
     if frame is None:
         return None, None, None, None
@@ -105,50 +109,6 @@ def detect_and_extract_features(model, frame):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
     return facenet_embedding, face_roi, (x_min, y_min, x_max, y_max), frame_with_box
 
-# === Anti-Spoofing Function ===
-def check_liveness(embeddings_batch, bboxes, frames):
-    """Enhanced anti-spoofing to detect photos on phone screens."""
-    if len(embeddings_batch) < 5 or len(bboxes) < 5 or len(frames) < 5:
-        return False  # Need all 5 frames for analysis
-    
-    # 1. Motion Consistency Check: Analyze bounding box movement
-    bbox_diffs = [
-        np.linalg.norm(np.array(bboxes[i][:2]) - np.array(bboxes[i+1][:2]))  # Distance between top-left corners
-        for i in range(len(bboxes)-1)
-    ]
-    avg_bbox_diff = np.mean(bbox_diffs)
-    motion_consistency_threshold = 2.0  # Minimum movement for live face (pixels)
-    max_bbox_diff = max(bbox_diffs)
-    photo_motion_threshold = 10.0  # Max allowed for rigid photo movement
-    has_natural_motion = avg_bbox_diff > motion_consistency_threshold and max_bbox_diff < photo_motion_threshold
-    
-    # 2. Embedding Variation Check: Ensure significant, consistent variation
-    embedding_diffs = [
-        np.linalg.norm(embeddings_batch[i] - embeddings_batch[i+1])
-        for i in range(len(embeddings_batch)-1)
-    ]
-    avg_embedding_diff = np.mean(embedding_diffs)
-    embedding_variation_threshold = 0.07  # Stricter for live face variation
-    has_embedding_variation = avg_embedding_diff > embedding_variation_threshold
-    
-    # 3. Background Motion Analysis: Check background consistency
-    background_variances = []
-    for i in range(len(frames)-1):
-        # Extract background region (outside face bbox)
-        x_min, y_min, x_max, y_max = bboxes[i]
-        bg_mask = np.ones(frames[i].shape[:2], dtype=np.uint8)
-        bg_mask[y_min:y_max, x_min:x_max] = 0  # Exclude face region
-        bg1 = cv2.bitwise_and(frames[i], frames[i], mask=bg_mask)
-        bg2 = cv2.bitwise_and(frames[i+1], frames[i+1], mask=bg_mask)
-        diff = cv2.absdiff(bg1, bg2)
-        background_variances.append(np.var(diff))
-    avg_bg_variance = np.mean(background_variances)
-    bg_variance_threshold = 5.0  # Higher variance indicates live background
-    has_live_background = avg_bg_variance > bg_variance_threshold
-    
-    print(f"Anti-Spoofing Debug: Motion={avg_bbox_diff:.2f}, Embedding Diff={avg_embedding_diff:.3f}, BG Variance={avg_bg_variance:.2f}")
-    return has_natural_motion and has_embedding_variation and has_live_background
-
 # === Database Functions ===
 def create_database():
     conn = sqlite3.connect('face_database.db')
@@ -163,10 +123,12 @@ def create_database():
     conn.commit()
     conn.close()
 
-# === User Registration ===
+# === User Registration (Capture Until 'q' Pressed) ===
 def register_user(user_name):
     create_database()
+    
     facenet_model = load_facenet()
+    
     cap = initialize_camera()
     facenet_embeddings = []
     
@@ -175,7 +137,7 @@ def register_user(user_name):
     cv2.namedWindow("Registration", cv2.WINDOW_NORMAL)
     
     collected = 0
-    phase = 0
+    phase = 0  # 0: frontal, 1: left, 2: right
     
     while True:
         frame = capture_frame(cap)
@@ -215,10 +177,11 @@ def register_user(user_name):
     cv2.destroyAllWindows()
     
     if len(facenet_embeddings) < 15:
-        print(f"Insufficient samples collected ({len(facenet_embeddings)}). Minimum 15 required.")
+        print(f"Insufficient samples collected ({len(facenet_embeddings)}). Minimum 15 (5 frontal, 5 left, 5 right) required. Registration failed.")
         return False
     
     mean_facenet_embedding = np.mean(facenet_embeddings, axis=0)
+    
     conn = sqlite3.connect('face_database.db')
     cursor = conn.cursor()
     cursor.execute(
@@ -231,9 +194,10 @@ def register_user(user_name):
     print(f"User '{user_name}' registered successfully with {len(facenet_embeddings)} samples.")
     return True
 
-# === Face Recognition with Enhanced Anti-Spoofing ===
+# === Face Recognition ===
 def recognize_face():
     facenet_model = load_facenet()
+    
     cap = initialize_camera()
     
     conn = sqlite3.connect('face_database.db')
@@ -247,29 +211,29 @@ def recognize_face():
         cap.release()
         return
     
-    print("Starting continuous face recognition with enhanced anti-spoofing (5 frames per second). Press 'q' to stop...")
+    print("Starting continuous face recognition (exactly 5 frames per second). Press 'q' to stop...")
     cv2.namedWindow("Recognition", cv2.WINDOW_NORMAL)
     
-    facenet_threshold = 0.70
+    facenet_threshold = 0.70  # Lowered from 0.75 to be more lenient
     last_recognized_name = None
     greeting_printed = False
     no_face_count = 0
     last_state = None
     
     max_frames_per_second = 5
-    target_frame_time = 1.0 / max_frames_per_second
+    target_frame_time = 1.0 / max_frames_per_second  # 0.2 seconds per frame
     batch_start_time = time.time()
     embeddings_batch = []
-    bboxes_batch = []
-    frames_batch = []
     frame_count = 0
     
+    # Variables to persist recognition result
     current_label = "No face detected"
     current_color = (0, 0, 255)
     
     while True:
-        cycle_start_time = time.time()
+        cycle_start_time = time.time()  # Start of the 1-second cycle
         
+        # Process exactly 5 frames in each 1-second cycle
         for _ in range(max_frames_per_second):
             frame_start_time = time.time()
             
@@ -280,19 +244,21 @@ def recognize_face():
             facenet_embedding, face_roi, bbox, frame_with_box = detect_and_extract_features(facenet_model, frame)
             frame_count += 1
             
-            if facenet_embedding is not None and face_roi is not None:
+            if facenet_embedding is not None:
                 embeddings_batch.append(facenet_embedding)
-                bboxes_batch.append(bbox)
-                frames_batch.append(frame)
             
+            # Display persistent recognition result
             cv2.putText(frame_with_box, current_label, (10, 60), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, current_color, 2)
+            
+            # Display FPS (fixed at 5.0)
             fps_text = "FPS: 5.00"
             cv2.putText(frame_with_box, fps_text, (10, 90), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
             
             cv2.imshow("Recognition", frame_with_box)
             
+            # Control frame rate to exactly 5 FPS
             elapsed_time = time.time() - frame_start_time
             sleep_time = target_frame_time - elapsed_time
             if sleep_time > 0:
@@ -304,41 +270,37 @@ def recognize_face():
                 return
         
         # Process the batch of 5 frames
-        if embeddings_batch and len(embeddings_batch) == 5:
-            # Enhanced anti-spoofing check
-            is_live = check_liveness(embeddings_batch, bboxes_batch, frames_batch)
-            if not is_live:
-                current_label = "Spoof detected (Photo/Screen)"
-                current_color = (0, 0, 255)
-                print("Spoof attempt detected (likely a photo or screen)!")
-            else:
-                avg_embedding = np.mean(embeddings_batch, axis=0)
-                best_match, highest_confidence = None, -1
-                for user_id, stored_embedding in stored_templates.items():
-                    similarity = np.dot(avg_embedding, stored_embedding)
-                    print(f"Similarity with {user_id}: {similarity:.3f}")
-                    if similarity > highest_confidence:
-                        highest_confidence = similarity
-                        best_match = user_id
+        if embeddings_batch:
+            avg_embedding = np.mean(embeddings_batch, axis=0)
+            best_match, highest_confidence = None, -1
+            for user_id, stored_embedding in stored_templates.items():
+                similarity = np.dot(avg_embedding, stored_embedding)
+                if similarity > highest_confidence:
+                    highest_confidence = similarity
+                    best_match = user_id
+                # Debug output: Print similarity for each registered user
+                print(f"Similarity with {user_id}: {similarity:.3f}")
+            
+            if highest_confidence > facenet_threshold:
+                current_label = f"Recognized: {best_match} ({highest_confidence:.3f})"
+                current_color = (0, 255, 0)
                 
-                if highest_confidence > facenet_threshold:
-                    current_label = f"Recognized: {best_match} ({highest_confidence:.3f})"
-                    current_color = (0, 255, 0)
-                    if not greeting_printed:
-                        print(f"Hello {best_match}, how's your day?😊")
-                        last_recognized_name = best_match
-                        greeting_printed = True
-                        no_face_count = 0
-                        last_state = 'recognized'
-                    elif (last_recognized_name == best_match and 
-                          no_face_count >= 5 and 
-                          last_state == 'no_face'):
-                        print(f"{best_match}, welcome back I miss you😍")
-                        no_face_count = 0
-                        last_state = 'recognized'
-                else:
-                    current_label = f"Unknown face ({highest_confidence:.3f})"
-                    current_color = (0, 0, 255)
+                if not greeting_printed:
+                    print(f"Hello {best_match}, how's your day?😊")
+                    last_recognized_name = best_match
+                    greeting_printed = True
+                    no_face_count = 0
+                    last_state = 'recognized'
+                
+                elif (last_recognized_name == best_match and 
+                      no_face_count >= 5 and 
+                      last_state == 'no_face'):
+                    print(f"{best_match}, welcome back I miss you😍")
+                    no_face_count = 0
+                    last_state = 'recognized'
+            else:
+                current_label = f"Unknown face ({highest_confidence:.3f})"
+                current_color = (0, 0, 255)
         else:
             current_label = "No face detected"
             current_color = (0, 0, 255)
@@ -350,11 +312,11 @@ def recognize_face():
                 elif last_state == 'no_face':
                     no_face_count += 1
         
+        # Reset batch
         embeddings_batch = []
-        bboxes_batch = []
-        frames_batch = []
         frame_count = 0
         
+        # Ensure the cycle takes exactly 1 second
         cycle_elapsed_time = time.time() - cycle_start_time
         if cycle_elapsed_time < 1.0:
             time.sleep(1.0 - cycle_elapsed_time)
@@ -397,6 +359,7 @@ def view_registered_users():
                     cursor.execute('SELECT facenet_embedding FROM users WHERE id = ?', (user_id,))
                     facenet_data = cursor.fetchone()[0]
                     conn.close()
+                    
                     facenet_embedding = np.frombuffer(facenet_data, dtype=np.float32)
                     print(f"\nDetails for '{user_id}':")
                     print(f"FaceNet embedding shape: {facenet_embedding.shape}")
@@ -501,7 +464,7 @@ def main_menu():
         return
     
     while True:
-        print("\n=== Lightweight Face Recognition System with Enhanced Anti-Spoofing ===")
+        print("\n=== Lightweight Face Recognition System ===")
         print("1. Start face recognition in real time")
         print("2. Register a new user")
         print("3. View registered users")
