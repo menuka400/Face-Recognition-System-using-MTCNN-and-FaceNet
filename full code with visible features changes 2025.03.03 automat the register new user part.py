@@ -9,7 +9,7 @@ import logging
 import tracemalloc
 import psutil
 import GPUtil
-import pyttsx3  # Added for TTS
+import pyttsx3  # TTS library
 
 import mediapipe as mp
 mp_face_detection = mp.solutions.face_detection
@@ -25,12 +25,27 @@ logging.getLogger('tensorflow').setLevel(logging.ERROR)
 
 # === TTS Initialization ===
 def init_tts():
-    """Initialize the TTS engine"""
+    """Initialize the TTS engine with an attractive voice"""
     try:
         engine = pyttsx3.init()
-        engine.setProperty('rate', 150)  # Speed of speech
-        engine.setProperty('volume', 0.9)  # Volume (0.0 to 1.0)
-        print("TTS engine initialized successfully")
+        engine.setProperty('rate', 140)  # Slightly slower for natural feel (120-180 range)
+        engine.setProperty('volume', 1.0)  # Max volume for clarity
+        
+        # List available voices to choose the best one
+        voices = engine.getProperty('voices')
+        print("Available voices:")
+        for i, voice in enumerate(voices):
+            print(f"{i}: {voice.name} (ID: {voice.id})")
+        
+        # Select a more human-like voice (e.g., Microsoft Zira on Windows, Samantha on macOS)
+        # Adjust index based on your system's voice list (run once to check)
+        attractive_voice_index = 1  # Example: Often Zira or another natural voice
+        if len(voices) > attractive_voice_index:
+            engine.setProperty('voice', voices[attractive_voice_index].id)
+        else:
+            engine.setProperty('voice', voices[0].id)  # Fallback to default if index unavailable
+        
+        print(f"Selected voice: {engine.getProperty('voice')}")
         return engine
     except Exception as e:
         print(f"Failed to initialize TTS engine: {str(e)}")
@@ -154,7 +169,7 @@ def register_user(user_name):
     print("Follow the voice instructions and arrows.")
     cv2.namedWindow("Registration", cv2.WINDOW_NORMAL)
     
-    # Display initial frame to ensure window is active
+    # Initial frame display
     frame = capture_frame(cap)
     if frame is not None:
         frame_with_box = detect_and_extract_features(facenet_model, frame)[3]
@@ -214,7 +229,7 @@ def register_user(user_name):
         
         cv2.imshow("Registration", frame_with_box)
         
-        # Move to next phase only after full duration
+        # Move to next phase after full duration
         if elapsed_time >= duration:
             print(f"Completed {phase_name} after {elapsed_time:.2f}s. Total samples so far: {collected_samples}")
             phase_idx += 1
@@ -252,7 +267,7 @@ def register_user(user_name):
     print(f"User '{user_name}' registered successfully with {len(facenet_embeddings)} samples.")
     return True
 
-# === Face Recognition (With TTS for Unrecognized Face) ===
+# === Face Recognition ===
 def recognize_face():
     facenet_model = load_facenet()
     tts_engine = init_tts()  # Initialize TTS for recognition
@@ -338,7 +353,10 @@ def recognize_face():
                 current_color = (0, 255, 0)
                 
                 if not greeting_printed:
-                    print(f"Hello {best_match}, how's your day?😊")
+                    print(f"Hello {best_match}, how's your day?")
+                    if tts_engine:
+                        tts_engine.say(f"Hello {best_match}, how's your day?")
+                        tts_engine.runAndWait()
                     last_recognized_name = best_match
                     greeting_printed = True
                     no_face_count = 0
@@ -348,26 +366,28 @@ def recognize_face():
                 elif (last_recognized_name == best_match and 
                       no_face_count >= 5 and 
                       last_state == 'no_face'):
-                    print(f"{best_match}, welcome back I miss you😍")
+                    print(f"{best_match}, welcome back I miss you!")
+                    if tts_engine:
+                        tts_engine.say(f"{best_match}, welcome back I miss you!")
+                        tts_engine.runAndWait()
                     no_face_count = 0
                     last_state = 'recognized'
                     unknown_count = 0
                 
             else:
                 current_label = f"Unknown face ({highest_confidence:.3f})"
-                current_color = (0, 0, 255)
+                current_color = (0, 255, 255)
                 unknown_count += 1
                 print(f"Unknown face detected. Count: {unknown_count}")
                 
                 if unknown_count >= 10:
                     print("Unknown face detected 10 times. Initiating registration...")
+                    if tts_engine:
+                        tts_engine.say("Unrecognized face detected. Please enter your name to register.")
+                        tts_engine.runAndWait()
                     cap.release()
                     cv2.destroyAllWindows()
                     
-                    if tts_engine:
-                        print("TTS triggered for unrecognized face prompt")
-                        tts_engine.say("Unrecognized face detected. Please enter your name to register.")
-                        tts_engine.runAndWait()
                     user_name = input("Unrecognized face detected. Please enter your name to register: ").strip()
                     if user_name:
                         success = register_user(user_name)
@@ -392,7 +412,10 @@ def recognize_face():
             if last_recognized_name is not None and greeting_printed:
                 no_face_count += 1
                 if no_face_count >= 5 and last_state == 'recognized':
-                    print(f"{last_recognized_name}, where you go come back I need you🥺")
+                    print(f"{last_recognized_name}, where you go come back I need you!")
+                    if tts_engine:
+                        tts_engine.say(f"{last_recognized_name}, where you go come back I need you!")
+                        tts_engine.runAndWait()
                     last_state = 'no_face'
                 elif last_state == 'no_face':
                     no_face_count += 1
