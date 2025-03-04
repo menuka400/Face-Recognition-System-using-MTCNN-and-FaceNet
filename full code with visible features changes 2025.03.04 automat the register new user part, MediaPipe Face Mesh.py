@@ -347,7 +347,7 @@ def recognize_face():
         cap.release()
         return
     
-    print("Starting continuous face recognition (exactly 5 frames per second). Press 'q' to stop...")
+    print("Starting continuous face recognition. Press 'q' to stop...")
     cv2.namedWindow("Recognition", cv2.WINDOW_NORMAL)
     
     facenet_threshold = 0.70
@@ -362,6 +362,7 @@ def recognize_face():
     target_frame_time = 1.0 / max_frames_per_second
     embeddings_batch = []
     frame_count = 0
+    prev_time = time.time()  # For FPS calculation
     
     current_label = "No face detected"
     current_color = (0, 0, 255)
@@ -382,12 +383,17 @@ def recognize_face():
             if facenet_embedding is not None:
                 embeddings_batch.append(facenet_embedding)
             
+            # Calculate real-time FPS
+            current_time = time.time()
+            fps = 1 / (current_time - prev_time) if (current_time - prev_time) > 0 else 0
+            prev_time = current_time
+            
             cv2.putText(frame_with_box, current_label, (10, 60), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, current_color, 2)
+            cv2.putText(frame_with_box, f"FPS: {fps:.2f}", (10, 90), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
             cv2.putText(frame_with_box, f"Unknown count: {unknown_count}", (10, 120), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-            cv2.putText(frame_with_box, "FPS: 5.00", (10, 90), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
             cv2.putText(frame_with_box, f"Detection count: {detection_count}", (10, 150), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
             
@@ -418,7 +424,7 @@ def recognize_face():
                 current_color = (0, 255, 0)
                 
                 if best_match == last_recognized_name:
-                    detection_count += 1
+                    detection_count = (detection_count % 5) + 1  # Loop from 1 to 5
                 else:
                     last_recognized_name = best_match
                     detection_count = 1
@@ -426,7 +432,7 @@ def recognize_face():
                     no_face_count = 0
                     last_state = None
                 
-                if detection_count >= 5 and not greeting_triggered:
+                if detection_count == 5 and not greeting_triggered:
                     print(f"Hello {best_match}, how's your day?")
                     if tts_engine:
                         tts_engine.say(f"Hello {best_match}, how's your day?")
@@ -436,7 +442,7 @@ def recognize_face():
                     no_face_count = 0
                     unknown_count = 0
                 
-                elif detection_count >= 5 and no_face_count >= 5 and last_state == 'no_face':
+                elif detection_count == 5 and no_face_count >= 5 and last_state == 'no_face':
                     print(f"{best_match}, welcome back I miss you!")
                     if tts_engine:
                         tts_engine.say(f"{best_match}, welcome back I miss you!")
