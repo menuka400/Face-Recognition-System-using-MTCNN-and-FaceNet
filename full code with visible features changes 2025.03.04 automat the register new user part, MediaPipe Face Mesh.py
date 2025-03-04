@@ -36,7 +36,7 @@ def init_tts():
         print("Available voices:")
         for i, voice in enumerate(voices):
             print(f"{i}: {voice.name} (ID: {voice.id})")
-        attractive_voice_index = 1
+        attractive_voice_index = 1  # Select the second voice (e.g., Zira)
         if len(voices) > attractive_voice_index:
             engine.setProperty('voice', voices[attractive_voice_index].id)
         else:
@@ -132,7 +132,7 @@ def detect_and_extract_features(model, frame):
 
 # === Head Pose Estimation ===
 def get_head_pose(frame):
-    """Estimate head yaw using MediaPipe Face Mesh landmarks; Left = Positive, Right = Negative"""
+    """Estimate head yaw using MediaPipe Face Mesh landmarks; Left = Positive (+), Right = Negative (-)"""
     rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = my_face_mesh.process(rgb_image)
     
@@ -149,19 +149,19 @@ def get_head_pose(frame):
             left_eye_x = left_eye.x * w
             right_eye_x = right_eye.x * w
             
-            # Yaw estimation: difference between nose and eye midpoints, negated for Left (+) and Right (-)
+            # Yaw estimation: difference between nose and eye midpoints
             eye_midpoint_x = (left_eye_x + right_eye_x) / 2
-            yaw = -(nose_x - eye_midpoint_x)  # Negate to flip left/right
+            yaw = nose_x - eye_midpoint_x  # Left (+), Right (-)
             
-            # Normalize yaw to approximate degrees
-            yaw_degrees = yaw * 100 / w  # Rough scaling, adjust as needed
+            # Normalize yaw to a relative scale (no specific degree threshold)
+            yaw_normalized = yaw * 100 / w  # Rough scaling for readability
             
-            if yaw_degrees > 30:
-                return "Left", yaw_degrees  # Left turn = Positive
-            elif yaw_degrees < -30:
-                return "Right", yaw_degrees  # Right turn = Negative
+            if yaw_normalized > 0:
+                return "Left", yaw_normalized
+            elif yaw_normalized < 0:
+                return "Right", yaw_normalized
             else:
-                return "Frontal", yaw_degrees
+                return "Frontal", yaw_normalized
     return "Unknown", 0
 
 # === Database Functions ===
@@ -188,7 +188,8 @@ def register_user(user_name):
         print("TTS not available. Proceeding without voice prompts.")
     
     cap = initialize_camera()
-    facenet_embeddings = []
+    facenet_embeddings = []  # All embeddings across phases
+    phase_embeddings = []  # Embeddings for the current phase
     
     print(f"Registering user '{user_name}'.")
     print("Follow the voice instructions and arrows. Adjust your head as required.")
@@ -202,9 +203,9 @@ def register_user(user_name):
     
     phases = [
         ("Frontal Face", None, 10, "Do not move, I am going to take some images in one, two, three"),
-        ("Prepare for Left", "left", 3, "Please turn your face to the left side, take images in one, two, three"),
+        ("Prepare for Left", "left", 3, "Turn left"),
         ("Left Side", "left", 10, None),
-        ("Prepare for Right", "right", 3, "Please turn your face to the right side, take images in one, two, three"),
+        ("Prepare for Right", "right", 3, "Turn right"),
         ("Right Side", "right", 10, None),
     ]
     phase_idx = 0
@@ -234,7 +235,7 @@ def register_user(user_name):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         cv2.putText(frame_with_box, f"Time left: {remaining_time:.1f}s", (10, 90), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        cv2.putText(frame_with_box, f"Head Pose: {head_pose} ({yaw_angle:.1f}°)", (10, 120), 
+        cv2.putText(frame_with_box, f"Head Pose: {head_pose} ({yaw_angle:.1f})", (10, 120), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
         if phase_name in ["Frontal Face", "Left Side", "Right Side"]:
             cv2.putText(frame_with_box, f"Samples: {collected_samples}", (10, 150), 
@@ -251,23 +252,35 @@ def register_user(user_name):
         # Check head pose and control phase progression
         pose_correct = False
         if phase_name in ["Frontal Face", "Left Side", "Right Side"]:
-            if (phase_name == "Frontal Face" and head_pose == "Frontal") or \
-               (phase_name == "Left Side" and head_pose == "Left") or \
-               (phase_name == "Right Side" and head_pose == "Right"):
+            if phase_name == "Frontal Face":
+                # For Frontal Face, collect samples regardless of strict pose
+                if facenet_embedding is not None:
+                    phase_embeddings.append(facenet_embedding)
+                    collected_samples += 1
+                    print(f"Sample collected in {phase_name}. Total samples: {collected_samples}")
+                pose_correct = True  # Always progress for Frontal Face
+            elif (phase_name == "Left Side" and head_pose == "Left" and yaw_angle > 0) or \
+                 (phase_name == "Right Side" and head_pose == "Right" and yaw_angle < 0):
                 pose_correct = True
                 tts_prompted = False  # Reset TTS prompt flag
                 if facenet_embedding is not None:
-                    facenet_embeddings.append(facenet_embedding)
+                    phase_embeddings.append(facenet_embedding)
                     collected_samples += 1
                     print(f"Sample collected in {phase_name}. Total samples: {collected_samples}")
             else:
-                cv2.putText(frame_with_box, "Adjust head position!", (10, 180), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                if not tts_prompted and tts_engine:
-                    print("Triggering TTS: Adjust your head")
-                    tts_engine.say("Until adjust your head the process not continue")
-                    tts_engine.runAndWait()
-                    tts_prompted = True
+                # Reset Left Side or Right Side phase if pose is incorrect
+                if phase_name in ["Left Side", "Right Side"]:
+                    cv2.putText(frame_with_box, "Adjust head position! Restarting phase...", (10, 180), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    if not tts_prompted and tts_engine:
+                        print("Triggering TTS: Adjust your head")
+                        tts_engine.say("Until adjust your head the process not continue, restarting phase")
+                        tts_engine.runAndWait()
+                        tts_prompted = True
+                    # Subtract samples collected in this phase and reset
+                    collected_samples -= len(phase_embeddings)
+                    phase_embeddings = []
+                    phase_start_time = time.time()  # Reset timer to start phase from beginning
         
         cv2.imshow("Registration", frame_with_box)
         
@@ -275,6 +288,9 @@ def register_user(user_name):
         if (phase_name in ["Prepare for Left", "Prepare for Right"]) or pose_correct:
             if elapsed_time >= duration:
                 print(f"Completed {phase_name} after {elapsed_time:.2f}s. Total samples so far: {collected_samples}")
+                # Add phase embeddings to total embeddings and reset phase embeddings
+                facenet_embeddings.extend(phase_embeddings)
+                phase_embeddings = []
                 phase_idx += 1
                 phase_start_time = time.time()
                 tts_prompted = False  # Reset for next phase
@@ -283,9 +299,6 @@ def register_user(user_name):
                     print(f"Now: {next_phase_name}")
                     if "Prepare" in next_phase_name:
                         print(f"Prepare to turn your face {phases[phase_idx][1]}...")
-        else:
-            # Reset phase timer if head pose is incorrect during collection phases
-            phase_start_time = time.time()
         
         key = cv2.waitKey(33)
         if key & 0xFF == ord('q'):
@@ -294,6 +307,9 @@ def register_user(user_name):
     
     cap.release()
     cv2.destroyAllWindows()
+    
+    # Ensure all collected embeddings are included
+    facenet_embeddings.extend(phase_embeddings)
     
     if len(facenet_embeddings) < 30:
         print(f"Insufficient samples collected ({len(facenet_embeddings)}). Minimum 30 required. Registration failed.")
